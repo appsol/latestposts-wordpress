@@ -1,49 +1,124 @@
 <?php
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
+/**
+ * Plugin Name: WP Posts Anywhere
+ * Plugin URI: http://www.appropriatesolutions.co.uk/
+ * Description: Shows the latest posts based on options in any widget location
+ * Version: The plugin's version number. Example: 0.1.0
+ * Author: Stuart Laverick
+ * Author URI: http://www.appropriatesolutions.co.uk/
+ * Text Domain: Optional. wp_posts_anywhere
+ * License: GPL2
  */
+/*  Copyright 2015  Stuart Laverick  (email : stuart@appropriatesolutions.co.uk)
 
-class appsolLatestPostsWidget extends WP_Widget {
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License, version 2, as 
+    published by the Free Software Foundation.
 
-    function __construct() {
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
+/**
+ * LatestPostsWidget
+ * 
+ * @package wp_posts_anywhere
+ * @todo Refactor to allow shortcode and function call
+ */
+defined( 'ABSPATH' ) or die( 'No script kiddies please!' );
+
+require_once 'the_archive_post.php';
+
+class PostsAnywhereWidget extends WP_Widget 
+{
+
+    /**
+     * Singleton class instance
+     *
+     * @var object LatestPostsWidget
+     **/
+    private static $instance = null;
+
+    /**
+     * Constructor for LatestPostsWidget
+     *
+     * @return void
+     * @author Stuart Laverick
+     **/
+    public function __construct()
+    {
+        if (is_admin()) {
+            add_action('load-post.php', array($this, 'addPostMeta'));
+        }
+        add_action("widgets_init", array($this, 'register'));
+
         parent::__construct(
-                'appsol_latest_posts', 'Latest Posts', array('description' => __('Shows a list of post extracts from a selected category in a Media Box style'))
+            'wp_posts_anywhere',
+            __('Latest Posts', 'wp_posts_anywhere'),
+            array('description' => __('Shows a list of post extracts from a selected category in a Media Box style'))
         );
     }
 
     /**
-     * Initiation point for the plugin
-     */
-    public static function init() {
-        if (is_admin()) {
-            add_action('load-post.php', array('appsolLatestPostsWidget', 'addPostMeta'));
+     * Creates or returns an instance of this class
+     *
+     * @return A single instance of this class
+     * @author Stuart Laverick
+     **/
+    public static function getInstance()
+    {
+        if (null == self::$instance) {
+            self::$instance = new self;
         }
-        add_action("widgets_init", array('appsolLatestPostsWidget', 'register'));
+
+        return self::$instance;
     }
 
     /**
      * Initiate the hooks required to add the post meta
+     *
+     * @return null
+     * @author Stuart Laverick
      */
-    public static function addPostMeta() {
-        add_action('add_meta_boxes', array('appsolLatestPostsWidget', 'add_meta_box'));
-        add_action('save_post', array('appsolLatestPostsWidget', 'save'));
+    public function addPostMeta()
+    {
+        add_action('add_meta_boxes', array($this, 'addMetaBox'));
+        add_action('save_post', array($this, 'savePostMeta'));
     }
 
     /**
      * Adds the meta box container.
+     *
+     * @return null
+     * @author Stuart Laverick
      */
-    public static function add_meta_box() {
+    public function addMetaBox()
+    {
         add_meta_box(
-                'featured_post', __('Featured', 'appsol'), array('appsolLatestPostsWidget', 'display_meta_box'), 'post', 'side', 'high');
+            'featured_post',
+            __('Featured', 'wp_posts_anywhere'),
+            array($this, 'displayMetaBox'),
+            'post',
+            'side',
+            'high'
+        );
     }
 
     /**
      * Save the meta when the post is saved.
      *
      * @param int $post_id The ID of the post being saved.
+     * @return null | int the Post ID on failure
+     * @author Stuart Laverick
+     * @todo Replace the Post Meta API with the tagging API 
      */
-    public static function save($post_id) {
+    public function savePostMeta($post_id)
+    {
         /*
          * We need to verify this came from the our screen and with proper authorization,
          * because save_post can be triggered at other times.
@@ -89,146 +164,220 @@ class appsolLatestPostsWidget extends WP_Widget {
      * Display Meta Box content.
      *
      * @param WP_Post $post The post object.
+     * @return null
+     * @author Stuart Laverick
      */
-    public function display_meta_box($post) {
+    public function displayMetaBox($post)
+    {
 
         // Add an nonce field so we can check for it later.
-        wp_nonce_field('appsol_featured_post', 'appsol_featured_post_nonce');
+        wp_nonce_field('wp_posts_anywhere_featured_post', 'wp_posts_anywhere_featured_post_nonce');
 
         // Use get_post_meta to retrieve an existing value from the database.
-        $value = get_post_meta($post->ID, '_appsol_featured_post', true);
+        $value = get_post_meta($post->ID, '_wp_posts_anywhere_featured_post', true);
 
         // Display the form, using the current value.
-        echo '<label for="featured_post">';
-        echo '<input type="checkbox" id="featured_post" name="featured_post" value="1"' . ($value ? ' checked="checked" ' : '') . ' />';
-        _e('Promote this Post', 'appsol');
-        echo '</label> ';
+        $html = ['<label for="featured_post">',
+                '<input type="checkbox" id="featured_post" name="featured_post" value="1"' . ($value ? ' checked="checked" ' : '') . ' />',
+                _('Promote this Post', 'wp_posts_anywhere'),
+                '</label> '];
+        print implode("\n", $html);
     }
 
-    function register() {
+    /**
+     * Returns the array of latest posts based on the instance parameters
+     * 
+     * Post Category selection options:
+     * All (default): all categories
+     * categories: specified categories
+     * current: only the current category and it's children
+     * except: all except the current category and it's children
+     *
+     * @param array The widget instance
+     * @return array The latest posts collection
+     * @author Stuart Laverick
+     **/
+    private function getLatestPosts($instance)
+    {
+        $params = array(
+            'numberposts' => $instance['post_qty'] ? $instance['post_qty'] : get_option('posts_per_page'),
+            'post_type' => array('post')
+        );
+
+        if ($instance['posts_context'] != 'all') {
+            $params['tax_query'] = array($this->buildTaxonomyQuery($instance['posts_context'], $instance['cat_ids']));
+        }
+
+        if (!empty($instance['featured'])) {
+            $params['meta_query'] = array($this->buildFeaturedQuery($instance['featured']));
+        }
+
+        return get_posts($params);
+    }
+
+    /**
+     * Builds the post taxonomy query from the instance parameters
+     *
+     * @return array The taxonomy query for WP_Query
+     * @author Stuart Laverick
+     **/
+    private function buildTaxonomyQuery($context = 'all', $cat_ids = [])
+    {
+        $tax_query = array(
+                'taxonomy' => 'category',
+                'field' => 'id'
+            );
+        // Specified categories
+        if ($context == 'categories') {
+            $tax_query['terms'] = (array) $cat_ids;
+        }
+        // In relation to the current category context
+        if ($context == 'current' || $context == 'except') {
+            $categories = array();
+            if (is_category()) {
+                $categories[] = get_query_var('cat');
+            } elseif (is_single()) {
+                global $post;
+                $post_categories = get_the_category($post->ID);
+                foreach ($post_categories as $cat) {
+                    $categories[] = $cat->term_id;
+                }
+            }
+            $tax_query['terms'] = $categories;
+            if ($context == 'except') {
+                $tax_query['operator'] = 'NOT IN';
+            }
+        }
+
+        return $tax_query;
+    }
+
+    /**
+     * Build the post_meta 'featured' query
+     * Can request either only featured or all except featured
+     *
+     * @return 
+     * @author Stuart Laverick
+     **/
+    private function buildFeaturedQuery($featured)
+    {
+        $featured_options = array(
+            'key' => '_wp_posts_anywhere_featured_post',
+            'value' => 1,
+        );
+        $featured_options['compare'] = $featured > 1 ? '!=' : '=';
+        return $featured_options;
+    }
+
+    /**
+     * Returns the registered image size names and dimensions
+     * 
+     * @global type $_wp_additional_image_sizes
+     * @return array Registered image sizes
+     */
+    private function getThumbnailSizes() {
+        global $_wp_additional_image_sizes;
+
+        $sizes = array();
+        foreach (get_intermediate_image_sizes() as $s) {
+            $sizes[$s] = array(0, 0);
+            if (in_array($s, array('thumbnail', 'medium', 'large'))) {
+                $sizes[$s][0] = get_option($s . '_size_w');
+                $sizes[$s][1] = get_option($s . '_size_h');
+                continue;
+            }
+            if (isset($_wp_additional_image_sizes) && isset($_wp_additional_image_sizes[$s])) {
+                $sizes[$s] = array($_wp_additional_image_sizes[$s]['width'], $_wp_additional_image_sizes[$s]['height'],);
+            }
+        }
+
+        return $sizes;
+    }
+
+    /**
+     * Build the full html string of the latest posts
+     *
+     * @return string HTML of latest posts
+     * @author Stuart Laverick
+     **/
+    public function buildLatestPosts($instance)
+    {
+        $index = 0;
+        $options = array();
+        $options['tmb_type'] = $instance['image_size'];
+        $latest_posts = $this->getLatestPosts($instance);
+        $html = ['<div class="latest-posts">'];
+
+        foreach ($latest_posts as $the_post) {
+            $index++;
+            // Start to output the post
+            if (is_active_sidebar('wp_posts_anywhere') && $instance['sidebar_pos'] == $index) {
+                $html[] = '<div class="block interval">';
+                ob_start();
+                dynamic_sidebar('wp_posts_anywhere');
+                $html[] = ob_get_clean();
+                $html[] = '</div>';
+            }
+            $the_archive_post = new ArchivePost($the_post, $options);
+            $html[] = $the_archive_post->getArchivePost();
+        }
+        $html[] = '</div>';
+        return implode("\n", $html);
+    }
+
+    /**
+     * Register the Sidebar and Widget
+     * The sidebar occurs within the list of posts, allowing 
+     * placement of adverts, promotions and similar
+     *
+     * @return void
+     * @author Stuart Laverick
+     * @todo Assign a sidebar for each widget using the widget ID
+     **/
+    public function register()
+    {
         register_sidebar(array(
             'name' => __("Latest Posts Interval"),
-            'id' => "latest_posts",
+            'id' => "wp_posts_anywhere",
             'description' => __("Sidebar that exists within the Latest Posts list"),
             'before_widget' => '<div id="%1$s" class="block widget %2$s">',
             'after_widget' => "\n</div>\n",
             'before_title' => "<h3 class=\"hd\">",
             'after_title' => "</h3>\n",
         ));
-        register_widget('appsolLatestPostsWidget');
+        register_widget('LatestPostsWidget');
     }
 
     /**
-     * widget - displays the output
-     * @param array $args Meta data for this Widget instance
-     * @param array $instance Parameters selected for this instance
+     * Front-end display of widget.
+     *
+     * @see WP_Widget::widget()
+     * @param array $args Widget arguments
+     * @param array $instance Saved parameters for this instance
      * @return null Echos content
      */
-    function widget($args, $instance) {
+    public function widget($args, $instance)
+    {
+        // If only to display on the front page and this isn't the fron page, return
+        if ($instance['home_only'] == 'yes' && !is_front_page()) {
+            return;
+        }
+
         extract($args, EXTR_SKIP);
         $title = apply_filters('widget_title', $instance['title']);
 
-        if ($instance['home_only'] == 'yes' && !is_front_page())
-            return;
-        $params = array(
-            'numberposts' => $instance['post_qty'] ? $instance['post_qty'] : get_option('posts_per_page'),
-            'post_type' => array('post')
-        );
-        /**
-         * Post Category selection
-         * Options:
-         * All (default): all categories
-         * categories: specified categories
-         * current: only the current category and it's children
-         * except: all except the current category and it's children
-         */
-        
-        $tax_query = array(
-                'taxonomy' => 'category',
-                'field' => 'id'
-            );
-        // Specified categories
-        if ($instance['posts_context'] == 'categories') {
-            $tax_query['terms'] = (array) $instance['cat_ids'];
-//            $params['category'] = implode(',', (array) $instance['cat_ids']);
+        echo $before_widget;
+        if (!empty($title)) {
+            echo $before_title;
+            echo $title;
+            echo $after_title;
         }
-        // In relation to the current category context
-        if ($instance['posts_context'] == 'current' || $instance['posts_context'] == 'except') {
-            $categories = array();
-            if (is_category()) {
-                $categories[] = get_query_var('cat');
-//                $params['category'] = $catid;
-            } elseif (is_single()) {
-                global $post;
-                $post_categories = get_the_category($post->ID);
-                foreach ($post_categories as $cat)
-                    $categories[] = $cat->term_id;
-//                $params['category'] = implode(',', $categories);
-            }
-            $tax_query['terms'] = $categories;
-            if ($instance['posts_context'] == 'except')
-                $tax_query['operator'] = 'NOT IN';
-        }
-        if ($instance['posts_context'] != 'all')
-            $params['tax_query'] = array($tax_query);
-        
-        /**
-         * Featured Posts
-         * Either only featured or all except featured
-         */
-        if (!empty($instance['featured'])) {
-            $featured_options = array(
-                'key' => '_appsol_featured_post',
-                'value' => 1,
-            );
-            $featured_options['compare'] = $instance['featured'] > 1 ? '!=' : '=';
-            $params['meta_query'] = array($featured_options);
-        }
-        
-        $latest_posts = get_posts($params);
-        if (!empty($latest_posts)) {
-            echo $before_widget;
-            if (!empty($title)) {
-                echo $before_title;
-                echo $title;
-                echo $after_title;
-            }
-            // Temporarily change the Excerpt Length
-            $excerpt_length = get_option('excerpt_length');
-            update_option('excerpt_length', 20);
-            ?>
-            <div class="bd latest-posts clearfix">
-                <?php
-                $index = 0;
-                $zebra = true;
-                $options = array();
-                if (!$instance['image_size'])
-                    $options['show_thumb'] = 0;
-                else
-                    $options['thumb_type'] = $instance['image_size'];
-                foreach ($latest_posts as $the_post):
-
-                    $index++;
-                    $zebra = !$zebra;
-                    $options['class'] = $zebra ? 'even' : 'odd';
-                    // Start to output the post
-                    ?>
-                    <?php if (function_exists('dynamic_sidebar') && is_active_sidebar('latest_posts') && $instance['sidebar_pos'] == $index) : ?>
-                        <div class="block interval">
-                            <?php dynamic_sidebar('latest_posts'); ?>
-                        </div>
-                    <?php endif; ?>
-                    <?php appsolEnvironment::the_archive_post($the_post, $options); ?>
-                <?php endforeach;
-                ?>
-            </div>
-            <?php
-            echo $after_widget;
-            update_option('excerpt_length', $excerpt_length);
-        }
+        echo $this->buildLatestPosts($instance);
+        echo $after_widget;
     }
 
-    function update($new_instance, $old_instance) {
+    function update($new_instance, $old_instance)
+    {
         $instance = $old_instance;
         $instance['title'] = strip_tags($new_instance['title']);
         $instance['posts_context'] = strip_tags($new_instance['posts_context']);
@@ -320,7 +469,7 @@ class appsolLatestPostsWidget extends WP_Widget {
             <select id="<?php echo $this->get_field_id('image_size'); ?>" name="<?php echo $this->get_field_name('image_size'); ?>">
                 <option value="0"><?php echo _e('No Image'); ?></option>
                 <?php
-                $image_sizes = appsolImages::get_thumbnail_sizes();
+                $image_sizes = $this->getThumbnailSizes();
                 foreach ($image_sizes as $image_size => $sizes):
                     ?>
                     <option value="<?php echo $image_size; ?>"<?php if ($image_size == $instance['image_size']) echo ' selected="selected"'; ?>><?php echo $image_size . ' (' . implode('x', $sizes) . ')'; ?></option>
@@ -328,7 +477,6 @@ class appsolLatestPostsWidget extends WP_Widget {
             </select></p>
         <?php
     }
-
 }
 
-appsolLatestPostsWidget::init();
+$latestPosts = LatestPostsWidget::getInstance();
