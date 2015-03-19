@@ -3,16 +3,19 @@
  * Plugin Name: WP Posts Anywhere
  * Plugin URI: http://www.appropriatesolutions.co.uk/
  * Description: Shows the latest posts based on options in any widget location
- * Version: The plugin's version number. Example: 0.1.0
+ * Version: 0.2.0
  * Author: Stuart Laverick
  * Author URI: http://www.appropriatesolutions.co.uk/
  * Text Domain: Optional. wp_posts_anywhere
  * License: GPL2
+ *
+ * @package wp_posts_anywhere
+ * @todo Refactor to allow shortcode and function call
  */
 /*  Copyright 2015  Stuart Laverick  (email : stuart@appropriatesolutions.co.uk)
 
     This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License, version 2, as 
+    it under the terms of the GNU General Public License, version 2, as
     published by the Free Software Foundation.
 
     This program is distributed in the hope that it will be useful,
@@ -24,17 +27,13 @@
     along with this program; if not, write to the Free Software
     Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
-/**
- * LatestPostsWidget
- * 
- * @package wp_posts_anywhere
- * @todo Refactor to allow shortcode and function call
- */
-defined( 'ABSPATH' ) or die( 'No script kiddies please!' );
+namespace PostsAnywhere;
+
+defined('ABSPATH') or die( 'No script kiddies please!' );
 
 require_once 'the_archive_post.php';
 
-class PostsAnywhereWidget extends WP_Widget 
+class PostsAnywhereWidget extends \WP_Widget
 {
 
     /**
@@ -53,14 +52,16 @@ class PostsAnywhereWidget extends WP_Widget
     public function __construct()
     {
         if (is_admin()) {
-            add_action('load-post.php', array($this, 'addPostMeta'));
+            add_action('load-post.php', [$this, 'addPostMeta']);
         }
-        add_action("widgets_init", array($this, 'register'));
+        add_action("widgets_init", [$this, 'register']);
+
+        add_shortcode('posts_here', [$this, 'shortcodeHandler']);
 
         parent::__construct(
-            'wp_posts_anywhere',
-            __('Latest Posts', 'wp_posts_anywhere'),
-            array('description' => __('Shows a list of post extracts from a selected category in a Media Box style'))
+            'posts_anywhere',
+            __('Posts Anywhere', 'wp_posts_anywhere'),
+            ['description' => __('Shows a list of post extracts from a selected category in a Media Box style')]
         );
     }
 
@@ -77,6 +78,68 @@ class PostsAnywhereWidget extends WP_Widget
         }
 
         return self::$instance;
+    }
+
+    /**
+     * Register the Sidebar and Widget
+     * The sidebar occurs within the list of posts, allowing 
+     * placement of adverts, promotions and similar
+     *
+     * @return void
+     * @author Stuart Laverick
+     * @todo Assign a sidebar for each widget using the widget ID
+     **/
+    public function register()
+    {
+        register_sidebar(array(
+            'name' => __("Posts Anywhere Interval"),
+            'id' => "wp_posts_anywhere",
+            'description' => __("Sidebar that exists within the Posts Anywhere list"),
+            'before_widget' => '<div id="%1$s" class="widget-area posts-anywhere-interval %2$s">',
+            'after_widget' => "\n</div>\n",
+            'before_title' => "<h3 class=\"hd\">",
+            'after_title' => "</h3>\n",
+        ));
+        register_widget('PostsAnywhere\PostsAnywhereWidget');
+    }
+
+    /**
+     * Handler for shortcode calls
+     *
+     * @return string HTML of the posts collection
+     * @author Stuart Laverick
+     **/
+    public function shortcodeHandler($attributes)
+    {
+        $default_options = [
+            'post_qty' => get_option('posts_per_page'),
+            'posts_context' => 'all',
+            'featured' => 0,
+            'cat_ids' => [],
+            'sidebar_pos' => 0,
+            'image_size' => 'thumbnail'
+        ];
+
+        if (isset($attributes['cat_ids'])) {
+            $attributes['cat_ids'] = array_map('intval', explode(',', $attributes['cat_ids']));
+        }
+
+        if (isset($attributes['image_size']) && $attributes['image_size']) {
+            $image_size_names = array_keys($this->getThumbnailSizes());
+            if (!in_array($attributes['image_size'], $image_size_names)) {
+                $attributes['image_size'] = 'thumbnail';
+            }
+        }
+
+        if (isset($attributes['posts_context'])) {
+            if(!in_array($attributes['posts_context'], ['all', 'current', 'except', 'categories'])) {
+                $attributes['posts_context'] == 'all';
+            }
+        }
+
+        $options = shortcode_atts($default_options, $attributes);
+
+        return $this->buildLatestPosts($options);
     }
 
     /**
@@ -179,7 +242,7 @@ class PostsAnywhereWidget extends WP_Widget
         // Display the form, using the current value.
         $html = ['<label for="featured_post">',
                 '<input type="checkbox" id="featured_post" name="featured_post" value="1"' . ($value ? ' checked="checked" ' : '') . ' />',
-                _('Promote this Post', 'wp_posts_anywhere'),
+                __('Promote this Post', 'wp_posts_anywhere'),
                 '</label> '];
         print implode("\n", $html);
     }
@@ -306,7 +369,8 @@ class PostsAnywhereWidget extends WP_Widget
         $options = array();
         $options['tmb_type'] = $instance['image_size'];
         $latest_posts = $this->getLatestPosts($instance);
-        $html = ['<div class="latest-posts">'];
+
+        $html = ['<div class="posts-anywhere">'];
 
         foreach ($latest_posts as $the_post) {
             $index++;
@@ -323,29 +387,6 @@ class PostsAnywhereWidget extends WP_Widget
         }
         $html[] = '</div>';
         return implode("\n", $html);
-    }
-
-    /**
-     * Register the Sidebar and Widget
-     * The sidebar occurs within the list of posts, allowing 
-     * placement of adverts, promotions and similar
-     *
-     * @return void
-     * @author Stuart Laverick
-     * @todo Assign a sidebar for each widget using the widget ID
-     **/
-    public function register()
-    {
-        register_sidebar(array(
-            'name' => __("Latest Posts Interval"),
-            'id' => "wp_posts_anywhere",
-            'description' => __("Sidebar that exists within the Latest Posts list"),
-            'before_widget' => '<div id="%1$s" class="block widget %2$s">',
-            'after_widget' => "\n</div>\n",
-            'before_title' => "<h3 class=\"hd\">",
-            'after_title' => "</h3>\n",
-        ));
-        register_widget('LatestPostsWidget');
     }
 
     /**
@@ -479,4 +520,4 @@ class PostsAnywhereWidget extends WP_Widget
     }
 }
 
-$latestPosts = LatestPostsWidget::getInstance();
+$latestPosts = PostsAnywhereWidget::getInstance();

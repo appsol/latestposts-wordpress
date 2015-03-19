@@ -1,4 +1,4 @@
-wp_posts_anywhere
+WP Posts Anywhere
 =====================
 
-Latest Posts Plugin for Wordpress
+This plugin lets you create a customised post query and output the resulting posts via a widget or a shortcode.
