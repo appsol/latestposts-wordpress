@@ -3,7 +3,7 @@
  * Plugin Name: WP Posts Anywhere
  * Plugin URI: http://www.appropriatesolutions.co.uk/
  * Description: Shows the latest posts based on options in any widget location
- * Version: 0.2.0
+ * Version: 0.3.0
  * Author: Stuart Laverick
  * Author URI: http://www.appropriatesolutions.co.uk/
  * Text Domain: Optional. wp_posts_anywhere
@@ -32,6 +32,7 @@ namespace PostsAnywhere;
 defined('ABSPATH') or die( 'No script kiddies please!' );
 
 require_once 'the_archive_post.php';
+require_once 'functions.php';
 
 class PostsAnywhereWidget extends \WP_Widget
 {
@@ -106,6 +107,15 @@ class PostsAnywhereWidget extends \WP_Widget
     /**
      * Handler for shortcode calls
      *
+     * Options:
+     * post_qty => Integer: Number of posts to show
+     * posts_context => String: one of 'all', 'current', 'except', 'categories'
+     * featured => Integer: show all posts (0) only featured (1) or no featured (2)
+     * cat_ids => String: comma seperated category ids to use
+     * sidebar_pos => Integer: the index after which to insert the sidebar, or no sidebar (0)
+     * image_size => String: the featured image size, leave empty for no image
+     * archive_post => Array: control the Archive Post rendering (see ArchivePost:default_options)
+     *
      * @return string HTML of the posts collection
      * @author Stuart Laverick
      **/
@@ -117,24 +127,34 @@ class PostsAnywhereWidget extends \WP_Widget
             'featured' => 0,
             'cat_ids' => [],
             'sidebar_pos' => 0,
-            'image_size' => 'thumbnail'
+            'image_size' => 'thumbnail',
+            'archive_post' => []
         ];
 
         if (isset($attributes['cat_ids'])) {
             $attributes['cat_ids'] = array_map('intval', explode(',', $attributes['cat_ids']));
         }
 
-        if (isset($attributes['image_size']) && $attributes['image_size']) {
-            $image_size_names = array_keys($this->getThumbnailSizes());
-            if (!in_array($attributes['image_size'], $image_size_names)) {
-                $attributes['image_size'] = 'thumbnail';
-            }
+        if (isset($attributes['image_size'])) {
+            $attributes['image_size'] = $this->checkImageSize($attributes['image_size']);
         }
 
         if (isset($attributes['posts_context'])) {
             if(!in_array($attributes['posts_context'], ['all', 'current', 'except', 'categories'])) {
                 $attributes['posts_context'] == 'all';
             }
+        }
+
+        if (isset($attributes['archive_post'])) {
+            $archive_post_config = [];
+            $success = array_walk(explode(',', $attributes['archive_post']), function($keyvalue)
+                {
+                    $setting = explode(':', $keyvalue);
+                    if (count($setting) > 1) {
+                        $archive_post_config[$setting[0]] = $setting[1];
+                    }
+                });
+            $attributes['archive_post'] = $success? $archive_post_config : [];
         }
 
         $options = shortcode_atts($default_options, $attributes);
@@ -279,6 +299,23 @@ class PostsAnywhereWidget extends \WP_Widget
     }
 
     /**
+     * Checks the proposed image size exists
+     *
+     * @return String acceptable image size
+     * @author Stuart Laverick
+     **/
+    public function checkImageSize($image_size)
+    {
+        if ($image_size) {
+            $image_size_names = array_keys($this->getThumbnailSizes());
+            if (!in_array($image_size, $image_size_names)) {
+                $image_size = 'thumbnail';
+            }
+        }
+        return $image_size;
+    }
+
+    /**
      * Builds the post taxonomy query from the instance parameters
      *
      * @return array The taxonomy query for WP_Query
@@ -366,7 +403,7 @@ class PostsAnywhereWidget extends \WP_Widget
     public function buildLatestPosts($instance)
     {
         $index = 0;
-        $options = array();
+        $options = isset($instance['archive_post'])? $instance['archive_post'] : array();
         $options['tmb_type'] = $instance['image_size'];
         $latest_posts = $this->getLatestPosts($instance);
 

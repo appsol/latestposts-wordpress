@@ -191,7 +191,7 @@ namespace PostsAnywhere;
         <?php endif; ?>
         <?php if ($this->options['show_excerpt']): ?>
                 <div class="excerpt">
-                <?php echo $this->createExcerpt($post->post_content); ?>
+                <?php echo $post->post_excerpt? $post->post_excerpt : $this->createExcerpt($post->post_content); ?>
                 </div>
         <?php endif; ?>
                 <div class="meta">
